@@ -121,7 +121,7 @@ def Compute_TravelTimes(ArcIdxUsed, DJKs_Road_V0, alpha):
   NumScenarios=TT_s.shape[0]
 
 
-  CutInt=np.maximum(int(math.ceil(NumScenarios*alpha)),1)
+  CutInt=np.maximum(int(math.ceil(NumScenarios*(1-alpha))),1)
 
   Expected_TT=np.mean(TT_s)
   CVaR=np.mean(np.sort(TT_s)[-CutInt:]) 
