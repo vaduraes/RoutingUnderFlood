@@ -99,7 +99,7 @@ def Stochastic_Time_Dependent_Dijkstra(StartNode_Idx, EndNode_Idx, DJKs_Road_V0,
 
   return ArcIdxUsed, Model, Arc_Idx_Idx, MeanETT
 
-def PyomoChangeETT(Model, MeanETT, Max_ETT, Arc_Idx_Idx):
+def PyomoChangeETT (Model, MeanETT, Max_ETT, Arc_Idx_Idx):
 
     Model.MaxETT = Constraint(expr=summation(MeanETT, Model.x)<=Max_ETT)
     opt = SolverFactory("gurobi", solver_io="python")
@@ -129,7 +129,7 @@ def Compute_TravelTimes(ArcIdxUsed, DJKs_Road_V0, alpha):
   return Expected_TT, CVaR
 
 
-def GetGlobalOptimaRoute_Pyomo(ArcIdxUsed, StartNode_Idx, EndNode_Idx,  DJKs_Road_V0):
+def GetGlobalOptimaRoute_Pyomo(ArcIdxUsed, StartNode_Idx, EndNode_Idx,  DJKs_Road_V0, alpha):
   Node_ID          =DJKs_Road_V0["Node_ID"]
   NodesIdx_In=ArcIdxUsed
   Route_idx=[]
@@ -155,6 +155,7 @@ def MinETT_Dijkstra(StartNode_Idx, EndNode_Idx, DJKs_Road_V0):
   StartNode_ID     =Node_ID[StartNode_Idx]
   EndNode_ID       =Node_ID[EndNode_Idx]
 
+    
   Arc_ID           =DJKs_Road_V0["Arc_ID"]
   Arc_Idx          =DJKs_Road_V0["Arc_Idx"]
 
@@ -224,7 +225,7 @@ def MinETT_Dijkstra(StartNode_Idx, EndNode_Idx, DJKs_Road_V0):
   Model.OBJ = Objective(rule = objective_rule, sense=minimize)
   opt = SolverFactory("gurobi", solver_io="python")
   opt.options['max_iter'] = 5000
-  #opt.options['threads'] = 4
+  opt.options['threads'] = 4
   results=opt.solve(Model, tee=True)
   Optimal_X=Model.x.get_values()
   Optimal_X=np.array([Optimal_X[i] for i in range(len(Arc_Idx_Idx))],dtype=int)
@@ -239,7 +240,7 @@ def RunSingleRouteTDD(StartNode_Idx, EndNode_Idx, DJKs_Road_V0, alpha):
 
   #Min ETT
   ArcIdxUsed, _, _, _=MinETT_Dijkstra(StartNode_Idx, EndNode_Idx, DJKs_Road_V0)
-  RouteL, Route_idxL, ETTL, CVaRL=GetGlobalOptimaRoute_Pyomo(ArcIdxUsed, StartNode_Idx, EndNode_Idx,  DJKs_Road_V0)
+  RouteL, Route_idxL, ETTL, CVaRL=GetGlobalOptimaRoute_Pyomo(ArcIdxUsed, StartNode_Idx, EndNode_Idx,  DJKs_Road_V0, alpha)
   RouteSolutionsID.append(RouteL)
   RouteSolutionsIdx.append(Route_idxL)
   ETTSolutions.append(ETTL)
@@ -247,9 +248,9 @@ def RunSingleRouteTDD(StartNode_Idx, EndNode_Idx, DJKs_Road_V0, alpha):
 
   #Min CVaR
   ArcIdxUsed, Model, Arc_Idx_Idx, MeanETT=Stochastic_Time_Dependent_Dijkstra(StartNode_Idx, EndNode_Idx, DJKs_Road_V0, Max_ETT=10**9, alpha=alpha)
-  Route, Route_idx, ETT_U, CVaR_U=GetGlobalOptimaRoute_Pyomo(ArcIdxUsed, StartNode_Idx, EndNode_Idx,  DJKs_Road_V0)
+  Route, Route_idx, ETT_U, CVaR_U=GetGlobalOptimaRoute_Pyomo(ArcIdxUsed, StartNode_Idx, EndNode_Idx,  DJKs_Road_V0, alpha)
 
-  if CVaRL== CVaR_U:
+  if np.abs(ETTL-ETT_U)<1:
     return RouteSolutionsID, RouteSolutionsIdx, ETTSolutions, CVaRSolutions
   
   else:
@@ -260,19 +261,44 @@ def RunSingleRouteTDD(StartNode_Idx, EndNode_Idx, DJKs_Road_V0, alpha):
     CVaRSolutions.append(CVaR_U)    
     print ("Current CVaR: %f"%CVaRSolutions[-1])
 
-    for Max_ETT in np.arange(ETTL-(ETTL-ETT_U)/5,ETTL,-(ETTL-ETT_U)/5):
+    Delta=(ETT_U-ETTL)/5
+    Max_ETT=ETT_U-Delta #New ETT
+    for i in range(10):
+      
       ArcIdxUsed, Model, Arc_Idx_Idx=PyomoChangeETT(Model, MeanETT, Max_ETT, Arc_Idx_Idx)
-      RouteF, Route_idxF, ETTF, CVaRF=GetGlobalOptimaRoute_Pyomo(ArcIdxUsed, StartNode_Idx, EndNode_Idx,  DJKs_Road_V0)
+      RouteF, Route_idxF, ETTF, CVaRF=GetGlobalOptimaRoute_Pyomo(ArcIdxUsed, StartNode_Idx, EndNode_Idx,  DJKs_Road_V0, alpha)
 
-      if ETTL==ETTSolutions[-1]==0:
+      if ETTF-ETTL>=(ETT_U-ETTL)/10:
         RouteSolutionsID.append(RouteF)
         RouteSolutionsIdx.append(Route_idxF)
         ETTSolutions.append(ETTF)
         CVaRSolutions.append(CVaRF)
+
+        Delta=(ETTF-ETTL)/5
+        Max_ETT=ETTF-Delta
+        
       else:
+        SortOrder=np.argsort(ETTSolutions)
+        ETTSolutions=np.array(ETTSolutions)
+        CVaRSolutions=np.array(CVaRSolutions)
+        ETTSolutions=ETTSolutions[SortOrder]
+        CVaRSolutions=CVaRSolutions[SortOrder]
+
+        RouteSolutionsID = [RouteSolutionsID[i] for i in SortOrder]
+        RouteSolutionsIdx = [RouteSolutionsIdx[i] for i in SortOrder]
         return RouteSolutionsID, RouteSolutionsIdx, ETTSolutions, CVaRSolutions
 
+    SortOrder=np.argsort(ETTSolutions)
+    ETTSolutions=np.array(ETTSolutions)
+    CVaRSolutions=np.array(CVaRSolutions)
+    ETTSolutions=ETTSolutions[SortOrder]
+    CVaRSolutions=CVaRSolutions[SortOrder]
+
+    RouteSolutionsID = [RouteSolutionsID[i] for i in SortOrder]
+    RouteSolutionsIdx = [RouteSolutionsIdx[i] for i in SortOrder]
     return RouteSolutionsID, RouteSolutionsIdx, ETTSolutions, CVaRSolutions
+  
+  #RouteSolutionsID, RouteSolutionsIdx, ETTSolutions, CVaRSolutions=RunSingleRouteTDD(StartNode_Idx, EndNode_Idx, DJKs_Road_V0, alpha)
   
 def OneRun(DJKs_Road_V0, alpha,OD, Ith_run):
     NumAttempts=0
@@ -318,7 +344,7 @@ def OneRun(DJKs_Road_V0, alpha,OD, Ith_run):
 ####
 PathData="./Data/"
 #Using time series of flood as as synthetic flood scenario
-Data=np.load(PathData+"DJKFlorence.npz",allow_pickle=True)
+Data=np.load(PathData+"DJKMatthew.npz",allow_pickle=True)
 TimeDiscretizations=Data["TimeDiscretizations"]
 D=np.load(PathData+"OD.npz")
 OD=D["OD"]
@@ -326,7 +352,7 @@ DJKs_Road_V0=Data["DJKs_Road_Flood"].item()
 
 alpha=0.9
 
-Data=np.load(PathData+"DJKFlorence.npz",allow_pickle=True)
+Data=np.load(PathData+"DJKMatthew.npz",allow_pickle=True)
 DJKs_Road_V0=Data["DJKs_Road_Flood"].item()
 Arc_Travel_Time  =DJKs_Road_V0["Arc_Travel_Time"]
 Arc_Idx          =DJKs_Road_V0["Arc_Idx"]
